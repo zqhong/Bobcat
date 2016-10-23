@@ -9,7 +9,31 @@ class ServerException(Exception):
     pass
 
 
-class CaseNoFile(object):
+class BaseCase(object):
+    """
+    Parent for case handlers.
+    """
+
+    def handle_file(self, handler, full_path):
+        try:
+            with open(full_path, 'r') as reader:
+                content = reader.read()
+            handler.send_content(content)
+        except IOError as msg:
+            msg = "'{0}' cannot be read: {1}".format(full_path, msg)
+            handler.handle_error(msg)
+
+    def index_path(self, handler):
+        return os.path.join(handler.full_path, 'index.html')
+
+    def test(self, handler):
+        assert False, "Not implemented"
+
+    def act(self, handler):
+        assert False, "Not implemented."
+
+
+class CaseNoFile(BaseCase):
     """
     File or directory does not exist.
     """
@@ -21,7 +45,27 @@ class CaseNoFile(object):
         raise ServerException("'{0}' not found.".format(handler.path))
 
 
-class CaseExistingFile(object):
+class CaseCgiFile(BaseCase):
+    """
+    Something runnable.
+    """
+
+    def run_cgi(self, handler):
+        cmd = "python.exe " + handler.full_path
+        child_stdin, child_stdout = os.popen2(cmd)
+        child_stdin.close()
+        data = child_stdout.read()
+        child_stdout.close()
+        handler.send_content(data)
+
+    def test(self, handler):
+        return os.path.isfile(handler.full_path) and handler.full_path.endswith('.py')
+
+    def act(self, handler):
+        self.run_cgi(handler)
+
+
+class CaseExistingFile(BaseCase):
     """
     File exists.
     """
@@ -30,13 +74,46 @@ class CaseExistingFile(object):
         return os.path.isfile(handler.full_path)
 
     def act(self, handler):
-        handler.handle_file(handler.full_path)
+        self.handle_file(handler, handler.full_path)
 
 
-class CaseDirectoryNoIndexFile(object):
+class CaseDirectoryIndexFile(BaseCase):
+    """
+    Serve index.html page for a directory.
+    """
+
+    def test(self, handler):
+        return os.path.isdir(handler.full_path) and os.path.isfile(self.index_path(handler))
+
+    def act(self, handler):
+        self.handle_file(handler, self.index_path(handler))
+
+
+class CaseDirectoryNoIndexFile(BaseCase):
     """
     Serve listing for a directory without an index.html page.
     """
+
+    # Hwo to display a directory listing.
+    listing_page = """\
+            <html>
+            <body>
+            <ul>
+            {0}
+            </ul>
+            </body>
+            </html>
+    """
+
+    def list_dir(self, handler, full_path):
+        try:
+            entries = os.listdir(full_path)
+            bullets = ['<li>{0}</li>'.format(e) for e in entries if not e.startswith('.')]
+            page = self.listing_page.format('\n'.join(bullets))
+            handler.send_content(page)
+        except OSError as msg:
+            msg = "'{0}' cannot be listed: {1}".format(handler.path, msg)
+            handler.handle_error(msg)
 
     def index_path(self, handler):
         return os.path.join(handler.full_path, 'index.html')
@@ -45,37 +122,10 @@ class CaseDirectoryNoIndexFile(object):
         return os.path.isdir(handler.full_path) and not os.path.isfile(self.index_path(handler))
 
     def act(self, handler):
-        handler.list_dir(handler.full_path)
+        self.list_dir(handler, handler.full_path)
 
 
-class CaseDirectoryIndexFile(object):
-    """
-    Serve index.html page for a directory.
-    """
-
-    def index_path(self, handler):
-        return os.path.join(handler.full_path, 'index.html')
-
-    def test(self, handler):
-        return os.path.isdir(handler.full_path) and os.path.isfile(self.index_path(handler))
-
-    def act(self, handler):
-        handler.handle_file(self.index_path(handler))
-
-
-class CaseCgiFile(object):
-    """
-    Something runnable.
-    """
-
-    def test(self, handler):
-        return os.path.isfile(handler.full_path) and handler.full_path.endswith('.py')
-
-    def act(self, handler):
-        handler.run_cgi(handler.full_path)
-
-
-class CaseAlwaysFail(object):
+class CaseAlwaysFail(BaseCase):
     """
     Base case if nothing else worked.
     """
@@ -112,17 +162,6 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         </html>
         """
 
-    # Hwo to display a directory listing.
-    listing_page = """\
-        <html>
-        <body>
-        <ul>
-        {0}
-        </ul>
-        </body>
-        </html>
-"""
-
     def do_GET(self):
         """
         Classify and handle request.
@@ -140,33 +179,6 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         # Handle errors.
         except Exception as msg:
             self.handle_error(msg)
-
-    def handle_file(self, full_path):
-        try:
-            with open(full_path, 'r') as reader:
-                content = reader.read()
-            self.send_content(content)
-        except IOError as msg:
-            msg = "'{0}' cannot be read: {1}".format(self.path, msg)
-            self.handle_error(msg)
-
-    def list_dir(self, full_path):
-        try:
-            entries = os.listdir(full_path)
-            bullets = ['<li>{0}</li>'.format(e) for e in entries if not e.startswith('.')]
-            page = self.listing_page.format('\n'.join(bullets))
-            self.send_content(page)
-        except OSError as msg:
-            msg = "'{0}' cannot be listed: {1}".format(self.path, msg)
-            self.handle_error(msg)
-
-    def run_cgi(self, full_path):
-        cmd = "python.exe " + full_path
-        child_stdin, child_stdout = os.popen2(cmd)
-        child_stdin.close()
-        data = child_stdout.read()
-        child_stdout.close()
-        self.send_content(data)
 
     def send_content(self, content):
         self.send_response(200)
