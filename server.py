@@ -14,6 +14,20 @@ class BaseCase(object):
     Parent for case handlers.
     """
 
+    # HTTP status codes
+    HTTP_NOT_FOUND = 404
+    HTTP_INTERNAL_SERVER_ERROR = 500
+
+    # How to display an error.
+    error_page = """\
+        <html>
+        <body>
+        <h1>Error accessing {path}</h1>
+        <p>{msg}</p>
+        </body>
+        </html>
+        """
+
     def handle_file(self, handler, full_path):
         try:
             with open(full_path, 'r') as reader:
@@ -22,6 +36,10 @@ class BaseCase(object):
         except IOError as msg:
             msg = "'{0}' cannot be read: {1}".format(full_path, msg)
             handler.handle_error(msg)
+
+    def handle_error(self, handler, msg, status):
+        content = self.error_page.format(path=handler.path, msg=msg)
+        handler.send_content(content, status)
 
     def index_path(self, handler):
         return os.path.join(handler.full_path, 'index.html')
@@ -42,7 +60,7 @@ class CaseNoFile(BaseCase):
         return not os.path.exists(handler.full_path)
 
     def act(self, handler):
-        raise ServerException("'{0}' not found.".format(handler.path))
+        self.handle_error(handler, "'{0}' not found.".format(handler.path), self.HTTP_NOT_FOUND)
 
 
 class CaseCgiFile(BaseCase):
@@ -134,7 +152,7 @@ class CaseAlwaysFail(BaseCase):
         return True
 
     def act(self, handler):
-        raise ServerException("Unknown object '{0}'".format(handler.path))
+        self.handle_error(handler, "Unknown object '{0}'".format(handler.path), self.HTTP_INTERNAL_SERVER_ERROR)
 
 
 class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -152,44 +170,26 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         CaseAlwaysFail(),
     ]
 
-    # How to display an error.
-    error_page = """\
-        <html>
-        <body>
-        <h1>Error accessing {path}</h1>
-        <p>{msg}</p>
-        </body>
-        </html>
-        """
-
     def do_GET(self):
         """
         Classify and handle request.
         :return:
         """
-        try:
-            # Figure out what exactly is begin requested.
-            self.full_path = os.getcwd() + self.path
+        # Figure out what exactly is begin requested.
+        self.full_path = os.getcwd() + self.path
 
-            # Figure out how to handle it.
-            for case in self.cases:
-                if case.test(self):
-                    case.act(self)
-                    break
-        # Handle errors.
-        except Exception as msg:
-            self.handle_error(msg)
+        # Figure out how to handle it.
+        for case in self.cases:
+            if case.test(self):
+                case.act(self)
+                break
 
-    def send_content(self, content):
-        self.send_response(200)
+    def send_content(self, content, status=200):
+        self.send_response(status)
         self.send_header('Content-type', 'text/html')
         self.send_header('Content-Length', str(len(content)))
         self.end_headers()
         self.wfile.write(content)
-
-    def handle_error(self, msg):
-        content = self.error_page.format(path=self.path, msg=msg)
-        self.send_content(content)
 
 
 if __name__ == '__main__':
