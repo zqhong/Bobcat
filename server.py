@@ -63,6 +63,18 @@ class CaseDirectoryIndexFile(object):
         handler.handle_file(self.index_path(handler))
 
 
+class CaseCgiFile(object):
+    """
+    Something runnable.
+    """
+
+    def test(self, handler):
+        return os.path.isfile(handler.full_path) and handler.full_path.endswith('.py')
+
+    def act(self, handler):
+        handler.run_cgi(handler.full_path)
+
+
 class CaseAlwaysFail(object):
     """
     Base case if nothing else worked.
@@ -83,6 +95,7 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     cases = [
         CaseNoFile(),
+        CaseCgiFile(),
         CaseExistingFile(),
         CaseDirectoryIndexFile(),
         CaseDirectoryNoIndexFile(),
@@ -137,10 +150,6 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             msg = "'{0}' cannot be read: {1}".format(self.path, msg)
             self.handle_error(msg)
 
-    def handle_error(self, msg):
-        content = self.error_page.format(path=self.path, msg=msg)
-        self.send_content(content)
-
     def list_dir(self, full_path):
         try:
             entries = os.listdir(full_path)
@@ -151,12 +160,24 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             msg = "'{0}' cannot be listed: {1}".format(self.path, msg)
             self.handle_error(msg)
 
+    def run_cgi(self, full_path):
+        cmd = "python.exe " + full_path
+        child_stdin, child_stdout = os.popen2(cmd)
+        child_stdin.close()
+        data = child_stdout.read()
+        child_stdout.close()
+        self.send_content(data)
+
     def send_content(self, content):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.send_header('Content-Length', str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+
+    def handle_error(self, msg):
+        content = self.error_page.format(path=self.path, msg=msg)
+        self.send_content(content)
 
 
 if __name__ == '__main__':
