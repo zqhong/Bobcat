@@ -1,4 +1,12 @@
 import BaseHTTPServer
+import os
+
+
+class ServerException(Exception):
+    """
+    For internal error reporting.
+    """
+    pass
 
 
 class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -6,56 +14,57 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     Handle HTTP requests by returning a fixed 'page'.
     """
 
-    # Page to send back.
-    page = '''
-<html>
-<body>
-<table>
-<tr>  <td>Header</td>         <td>Value</td>          </tr>
-<tr>  <td>Date and time</td>  <td>{date_time}</td>    </tr>
-<tr>  <td>Client host</td>    <td>{client_host}</td>  </tr>
-<tr>  <td>Client port</td>    <td>{client_port}s</td> </tr>
-<tr>  <td>Command</td>        <td>{command}</td>      </tr>
-<tr>  <td>Path</td>           <td>{path}</td>         </tr>
-</table>
-</body>
-</html>
-'''
+    # How to display an error.
+    error_page = """\
+        <html>
+        <body>
+        <h1>Error accessing {path}</h1>
+        <p>{msg}</p>
+        </body>
+        </html>
+        """
 
     def do_GET(self):
         """
-        Handle a request by construing an HTML page that echoes the request back to the caller.
+        Classify and handle request.
         :return:
         """
-        page = self.create_page()
-        self.send_page(page)
+        try:
+            # Figure out what exactly is begin requested.
+            full_path = os.getcwd() + self.path
 
-    def create_page(self):
-        """
-        Create an information page to send.
-        :return:
-        """
-        values = {
-            'date_time': self.date_time_string(),
-            'client_host': self.client_address[0],
-            'client_port': self.client_address[1],
-            'command': self.command,
-            'path': self.path
-        }
-        page = self.page.format(**values)
-        return page
+            # It doesn't exists...
+            if not os.path.exists(full_path):
+                raise ServerException("'{0}' not found.".format(self.path))
+            # it is a file
+            elif os.path.isfile(full_path):
+                self.handle_file(full_path)
+            # it is something we don't handle.
+            else:
+                raise ServerException("Unknown object '{0}'".format(self.path))
+        # Handle errors.
+        except Exception as msg:
+            self.handle_error(msg)
 
-    def send_page(self, page):
-        """
-        Send the created page.
-        :param page:
-        :return:
-        """
+    def handle_file(self, full_path):
+        try:
+            with open(full_path, 'rb') as reader:
+                content = reader.read()
+            self.send_content(content)
+        except IOError as msg:
+            msg = "'{0}' cannot be read: {1}".format(self.path, msg)
+            self.handle_error(msg)
+
+    def handle_error(self, msg):
+        content = self.error_page.format(path=self.path, msg=msg)
+        self.send_content(content)
+
+    def send_content(self, content):
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Length", len(page))
+        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-Length', str(len(content)))
         self.end_headers()
-        self.wfile.write(page)
+        self.wfile.write(content)
 
 
 if __name__ == '__main__':
